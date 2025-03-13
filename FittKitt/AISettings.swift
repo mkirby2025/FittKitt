@@ -154,9 +154,8 @@ struct AISettingsView: View {
                 }
             }
             .navigationTitle("AI Settings")
-            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .automatic) {
                     Button("Done") {
                         if hasChanges {
                             settings.saveSettings()

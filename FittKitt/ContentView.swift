@@ -106,21 +106,20 @@ struct ContentView: View {
                 )
                 .ignoresSafeArea()
                 
-                // Add ScrollView to ensure all content is accessible
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 25) {
-                        Text("Let's Plan Your Workout")
-                            .font(.customHeading())
-                            .foregroundColor(.luxuryText)
-                            .padding(.top, 20)
-                        
-                        // NEW: Workout History Section
-                        WorkoutHistoryView(workoutHistory: workoutHistory)
-                        
-                        // Group related controls together with visual separation
-                        VStack(spacing: 20) { // Increased spacing between major sections
+                VStack(spacing: 0) {
+                    // Scrollable content
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(spacing: 25) {
+                            Text("Let's Plan Your Workout")
+                                .font(.customHeading())
+                                .foregroundColor(.luxuryText)
+                                .padding(.top, 20)
+                            
+                            // NEW: Workout History Section
+                            WorkoutHistoryView(workoutHistory: workoutHistory)
+                            
                             // Workout configuration section
-                            VStack(spacing: 16) { // Consistent spacing within a section
+                            VStack(spacing: 16) {
                                 Text("Configure Your Workout")
                                     .font(.headline)
                                     .foregroundColor(.luxuryText)
@@ -138,23 +137,31 @@ struct ContentView: View {
                             .padding()
                             .background(Color.luxuryCardBg.opacity(0.7))
                             .cornerRadius(15)
-                            
-                            // Action buttons with proper spacing and sizing
-                            HStack(spacing: 16) {
-                                Button("Reset") {
-                                    resetWorkoutSettings()
-                                }
-                                .buttonStyle(SecondaryButtonStyle())
-                                
-                                Button("Start Workout") {
-                                    startWorkout()
-                                }
-                                .buttonStyle(PrimaryButtonStyle())
-                            }
-                            .padding(.top, 8)
                         }
+                        .padding(.horizontal)
+                        .padding(.bottom, 100) // Add padding for the fixed buttons
                     }
-                    .padding(.horizontal)
+                    
+                    // Fixed buttons at bottom
+                    VStack(spacing: 0) {
+                        Divider()
+                            .background(Color.luxuryAccent.opacity(0.3))
+                        
+                        HStack(spacing: 16) {
+                            Button("Reset") {
+                                resetWorkoutSettings()
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                            
+                            Button("Start Workout") {
+                                startWorkout()
+                            }
+                            .buttonStyle(PrimaryButtonStyle())
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical, 16)
+                        .background(Color.luxuryBackgroundBottom.opacity(0.95))
+                    }
                 }
             }
             .navigationDestination(isPresented: $hasStartedWorkout) {
@@ -162,7 +169,6 @@ struct ContentView: View {
                           exercises: Int(numberOfExercises),
                           intensity: Int(intensity))
             }
-            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("FITTKITT")
@@ -171,7 +177,7 @@ struct ContentView: View {
                         .shadow(color: .luxuryAccent.opacity(0.5), radius: 10, x: 0, y: 0)
                 }
                 
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .automatic) {
                     Button(action: {
                         showingPersonalization = true
                     }) {
@@ -285,8 +291,8 @@ struct ContentView: View {
 struct TabataExercise: Identifiable {
     let id = UUID()
     let name: String
-    let workSeconds: Int = 30  // Work period
-    let restSeconds: Int = 15  // Rest period between exercises
+    let workSeconds: Int
+    let restSeconds: Int
     
     var totalDuration: Int {
         workSeconds + restSeconds
@@ -319,26 +325,99 @@ struct ExerciseTransitionView: View {
     }
 }
 
-// Update WorkoutTimerManager to handle both work and rest periods
+// Update WorkoutTimerManager to handle single exercise completion
 class WorkoutTimerManager: ObservableObject {
     @Published var timeRemaining: Int = 30
     @Published var currentExerciseIndex = 0
     @Published var isActive = false
     @Published var isPaused = false
     @Published var isWorkoutComplete = false
-    @Published var isResting = false // Add this to track rest periods
+    @Published var isResting = false
+    @Published var isExerciseComplete = false
+    
+    // Add a specific property to track the current exercise name
+    @Published var currentExerciseName: String = ""
+    @Published var nextExerciseName: String = ""
+    
+    // Add properties to track rounds
+    @Published var currentRound: Int = 1
+    @Published var totalRounds: Int = 1
+    
+    // Add property to track transition state
+    @Published var isTransitioning: Bool = false
     
     private var timer: Timer?
     private var exercises: [TabataExercise] = []
+    private var totalDuration: Int = 0
+    private var exerciseDuration: Int = 0
     
-    func startWorkout(with exercises: [TabataExercise]) {
+    func startWorkout(with exercises: [TabataExercise], totalDuration: Int) {
+        guard !exercises.isEmpty else { return }
+        
+        // To prevent unnecessary UI updates, only set values that are different
         self.exercises = exercises
-        self.isActive = true
-        self.isPaused = false
-        self.currentExerciseIndex = 0
-        self.isResting = false
-        self.timeRemaining = exercises[0].workSeconds
-        self.isWorkoutComplete = false
+        self.totalDuration = totalDuration
+        
+        // Calculate how many rounds each exercise should have
+        // Total workout time in seconds
+        let totalWorkoutSeconds = totalDuration * 60
+        
+        // Time allocated per exercise (distribute evenly)
+        let secondsPerExercise = totalWorkoutSeconds / exercises.count
+        
+        // Each round is 45 seconds (30s work + 15s rest)
+        let roundDuration = 45 // 30s work + 15s rest
+        let roundsPerExercise = max(1, secondsPerExercise / roundDuration)
+        
+        self.totalRounds = roundsPerExercise
+        self.exerciseDuration = secondsPerExercise
+        
+        print("Total workout: \(totalDuration) minutes (\(totalWorkoutSeconds) seconds)")
+        print("Exercises: \(exercises.count), Time per exercise: \(secondsPerExercise) seconds")
+        print("Rounds per exercise: \(roundsPerExercise) (each round: \(roundDuration) seconds)")
+        
+        // Group updates to reduce UI refresh cycles
+        DispatchQueue.main.async {
+            // Set the current exercise name explicitly
+            self.currentExerciseName = exercises[0].name
+            self.nextExerciseName = exercises.count > 1 ? exercises[1].name : ""
+            
+            self.isActive = true
+            self.isPaused = false
+            self.currentExerciseIndex = 0
+            self.currentRound = 1
+            self.isResting = false
+            self.isExerciseComplete = false
+            self.timeRemaining = exercises[0].workSeconds
+            self.isWorkoutComplete = false
+        }
+        
+        AudioManager.shared.playSound(for: .startWork)
+        startTimer()
+    }
+    
+    func startNextExercise() {
+        let nextIndex = currentExerciseIndex + 1
+        
+        if nextIndex >= exercises.count {
+            stopWorkout()
+            return
+        }
+        
+        // Group updates to reduce UI refresh cycles
+        DispatchQueue.main.async {
+            self.currentExerciseIndex = nextIndex
+            // Update exercise names explicitly
+            self.currentExerciseName = self.exercises[nextIndex].name
+            self.nextExerciseName = nextIndex + 1 < self.exercises.count ? self.exercises[nextIndex + 1].name : ""
+            
+            self.isResting = false
+            self.isExerciseComplete = false
+            self.isTransitioning = false
+            self.isActive = true
+            self.currentRound = 1
+            self.timeRemaining = self.exercises[nextIndex].workSeconds
+        }
         
         AudioManager.shared.playSound(for: .startWork)
         startTimer()
@@ -358,11 +437,18 @@ class WorkoutTimerManager: ObservableObject {
     func stopWorkout() {
         timer?.invalidate()
         timer = nil
-        isActive = false
-        isPaused = false
-        timeRemaining = 30
-        currentExerciseIndex = 0
-        isWorkoutComplete = true
+        
+        // Group updates to reduce UI refresh cycles
+        DispatchQueue.main.async {
+            self.isActive = false
+            self.isPaused = false
+            self.timeRemaining = 30
+            self.currentExerciseIndex = 0
+            self.currentRound = 1
+            self.isTransitioning = false
+            self.isWorkoutComplete = true
+        }
+        
         AudioManager.shared.playSound(for: .complete)
     }
     
@@ -377,32 +463,60 @@ class WorkoutTimerManager: ObservableObject {
             if timeRemaining <= 3 {
                 AudioManager.shared.playSound(for: .lastThreeSeconds)
             }
+            // Update only the time remaining to minimize UI refreshes
             timeRemaining -= 1
         } else {
             if isResting {
-                moveToNextExercise()
+                // Rest period completed
+                if currentRound < totalRounds {
+                    // Start the next round
+                    startNextRound()
+                } else {
+                    // All rounds completed for this exercise
+                    completeExercise()
+                }
             } else {
+                // Work period completed, start rest
                 startRestPeriod()
             }
         }
     }
     
     private func startRestPeriod() {
-        isResting = true
-        timeRemaining = exercises[currentExerciseIndex].restSeconds
+        DispatchQueue.main.async {
+            self.isResting = true
+            self.timeRemaining = self.exercises[self.currentExerciseIndex].restSeconds
+        }
         AudioManager.shared.playSound(for: .startRest)
     }
     
-    private func moveToNextExercise() {
-        currentExerciseIndex += 1
-        if currentExerciseIndex >= exercises.count {
-            stopWorkout()
-            return
+    private func startNextRound() {
+        DispatchQueue.main.async {
+            self.currentRound += 1
+            self.isResting = false
+            self.timeRemaining = self.exercises[self.currentExerciseIndex].workSeconds
+        }
+        AudioManager.shared.playSound(for: .startWork)
+    }
+    
+    private func completeExercise() {
+        timer?.invalidate()
+        timer = nil
+        
+        // Group updates to reduce UI refresh cycles
+        DispatchQueue.main.async {
+            self.isExerciseComplete = true
+            self.isActive = false
+            self.isTransitioning = true
         }
         
-        isResting = false
-        timeRemaining = exercises[currentExerciseIndex].workSeconds
-        AudioManager.shared.playSound(for: .startWork)
+        AudioManager.shared.playSound(for: .complete)
+        
+        // Automatically advance to the next exercise after a short delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self = self else { return }
+            self.startNextExercise()
+        }
     }
 }
 
@@ -648,9 +762,13 @@ struct WorkoutView: View {
             exercisePool = moderateIntensityExercises // Fallback
         }
         
-        // Shuffle and select the required number of exercises
+        // Use the specified number of exercises instead of calculating from duration
         return exercisePool.shuffled().prefix(exercises).map { exercise in
-            TabataExercise(name: exercise)
+            TabataExercise(
+                name: exercise,
+                workSeconds: 30,  // Fixed 30 seconds work
+                restSeconds: 15   // Fixed 15 seconds rest
+            )
         }
     }
     
@@ -725,10 +843,15 @@ struct WorkoutContentView: View {
                 
                 if timerManager.isWorkoutComplete {
                     WorkoutCompletionView(logWorkout: logWorkout, presentationMode: presentationMode)
+                        .transition(.opacity)
                 } else if !timerManager.isActive {
-                    WorkoutPreviewView(tabataWorkout: tabataWorkout, timerManager: timerManager)
+                    WorkoutPreviewView(tabataWorkout: tabataWorkout, timerManager: timerManager, totalDuration: duration)
+                        .transition(.opacity)
                 } else {
                     ActiveWorkoutView(timerManager: timerManager, tabataWorkout: tabataWorkout)
+                        .animation(.none, value: timerManager.isResting)
+                        .animation(.none, value: timerManager.timeRemaining)
+                        .transition(.opacity)
                 }
             }
             .navigationBarTitle("", displayMode: .inline)
@@ -759,6 +882,8 @@ struct WorkoutContentView: View {
                 Text("Do you want to save your progress or discard this workout?")
             }
         }
+        .animation(.none, value: timerManager.timeRemaining)
+        .animation(.none, value: timerManager.isResting)
     }
 }
 
@@ -807,34 +932,60 @@ struct TimerDisplay: View {
     let timeRemaining: Int
     let exerciseName: String
     let isResting: Bool
+    let currentRound: Int
+    let totalRounds: Int
+    
+    // Default initializer with default values for rounds
+    init(timeRemaining: Int, exerciseName: String, isResting: Bool, currentRound: Int = 1, totalRounds: Int = 1) {
+        self.timeRemaining = timeRemaining
+        self.exerciseName = exerciseName
+        self.isResting = isResting
+        self.currentRound = currentRound
+        self.totalRounds = totalRounds
+    }
     
     var body: some View {
         VStack(spacing: 10) {
             Text(isResting ? "REST" : "WORK")
                 .font(.title)
-                .foregroundColor(isResting ? .luxuryAccent : .luxuryText)
+                .fontWeight(.bold)
+                .foregroundColor(isResting ? .luxuryAccent : .green)
+                .padding(.vertical, 4)
+                .padding(.horizontal, 20)
+                .background(
+                    RoundedRectangle(cornerRadius: 15)
+                        .fill(isResting ? Color.luxuryAccent.opacity(0.2) : Color.green.opacity(0.2))
+                )
+                .animation(.none) // Zero animation
             
             Text("\(timeRemaining)")
                 .font(.system(size: 72, weight: .bold, design: .rounded))
                 .foregroundColor(.luxuryText)
                 .contentTransition(.numericText())
+                .transition(.identity) // No transition
+                .transaction { transaction in
+                    // Only animate the number itself, not layout
+                    transaction.animation = transaction.animation?.speed(1.5)
+                }
             
-            Text(exerciseName)
-                .font(.title2)
-                .foregroundColor(isResting ? .luxuryText.opacity(0.7) : .luxuryAccent)
-            
-            // Progress indicator
-            Text(isResting ? "Rest before next exercise" : "Complete the exercise")
+            // Progress indicator text - with NO relationship to exercise name
+            Text(isResting ? "Rest period" : "Work period")
                 .font(.subheadline)
                 .foregroundColor(.luxuryText.opacity(0.8))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+                .fixedSize(horizontal: false, vertical: true)
+                .id(isResting ? "rest-text" : "work-text") // Fixed IDs
+                .animation(.none) // Zero animation
         }
         .padding()
         .background(Color.luxuryCardBg)
         .cornerRadius(15)
         .overlay(
             RoundedRectangle(cornerRadius: 15)
-                .stroke(isResting ? Color.luxuryAccent.opacity(0.3) : Color.luxuryAccent, lineWidth: isResting ? 1 : 2)
+                .stroke(isResting ? Color.luxuryAccent : Color.green, lineWidth: 2)
         )
+        .animation(.none) // Zero animation for container
     }
 }
 
@@ -985,61 +1136,165 @@ func exerciseIcon(for exercise: String) -> String {
     }
 }
 
-// Update ActiveWorkoutView to remove animations when changing exercises
+// Update ActiveWorkoutView to use the new stable exercise name property
 struct ActiveWorkoutView: View {
     let timerManager: WorkoutTimerManager
     let tabataWorkout: [TabataExercise]
     
+    // Calculate exercise time in minutes and seconds
+    var exerciseTimeDisplay: String {
+        let totalSeconds = 45 * timerManager.totalRounds // 45 seconds per round (30 work + 15 rest)
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
+        return minutes > 0 ? "\(minutes)m \(seconds)s" : "\(seconds)s"
+    }
+    
     var body: some View {
-        // Active workout
         VStack(spacing: 25) {
-            // Timer and current exercise only
-            VStack(spacing: 15) {
-                // Exercise Name
-                Text(tabataWorkout[timerManager.currentExerciseIndex].name)
-                    .font(.title2)
-                    .bold()
-                    .foregroundColor(.luxuryText)
-                    .padding(.vertical, 8)
-                    .animation(.none, value: timerManager.currentExerciseIndex)
+            // Exercise progress
+            Text("Exercise \(timerManager.currentExerciseIndex + 1) of \(tabataWorkout.count)")
+                .font(.headline)
+                .foregroundColor(.luxuryText)
+                .animation(.none)
+                .id("exercise-progress")
+            
+            // Use the stable exercise name instead of directly accessing the array
+            Text(timerManager.currentExerciseName)
+                .font(.title2)
+                .bold()
+                .foregroundColor(.luxuryAccent)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+                .fixedSize(horizontal: false, vertical: true) // Prevent layout shifts
+                .id("current-exercise") // Fixed ID for stability
+                .animation(.none) // Disable all animations
+            
+            // Round information with total time
+            VStack(spacing: 5) {
+                Text("Round \(timerManager.currentRound) of \(timerManager.totalRounds)")
+                    .font(.subheadline)
+                    .foregroundColor(.luxuryText.opacity(0.8))
+                    .id("round-info")
                 
-                // Timer
-                TimerDisplay(
-                    timeRemaining: timerManager.timeRemaining,
-                    exerciseName: tabataWorkout[timerManager.currentExerciseIndex].name,
-                    isResting: timerManager.isResting
-                )
+                Text("Total time: \(exerciseTimeDisplay)")
+                    .font(.caption)
+                    .foregroundColor(.luxuryText.opacity(0.6))
+                    .id("exercise-duration")
             }
-            .padding()
-            .background(Color.luxuryCardBg)
-            .cornerRadius(15)
-            .overlay(
-                RoundedRectangle(cornerRadius: 15)
-                    .stroke(Color.luxuryAccent, lineWidth: 2)
+            .animation(.none)
+            
+            // Timer display - also use the stable name
+            TimerDisplay(
+                timeRemaining: timerManager.timeRemaining,
+                exerciseName: timerManager.currentExerciseName,
+                isResting: timerManager.isResting,
+                currentRound: timerManager.currentRound,
+                totalRounds: timerManager.totalRounds
             )
-            .animation(.none, value: timerManager.currentExerciseIndex)
             
-            // Pause/Resume Button
-            Button(action: {
-                if timerManager.isPaused {
-                    timerManager.resumeWorkout()
-                } else {
-                    timerManager.pauseWorkout()
+            if timerManager.isExerciseComplete {
+                // Show a brief transition message instead of completion overlay
+                VStack(spacing: 15) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 60))
+                        .foregroundColor(.luxuryAccent)
+                    
+                    Text("Exercise Complete!")
+                        .font(.title3)
+                        .foregroundColor(.luxuryText)
+                    
+                    if timerManager.currentExerciseIndex < tabataWorkout.count - 1 {
+                        Text("Moving to next exercise...")
+                            .font(.headline)
+                            .foregroundColor(.luxuryAccent)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .id("next-exercise-message")
+                        
+                        // Add progress indicator
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .luxuryAccent))
+                            .scaleEffect(1.5)
+                            .padding(.top, 10)
+                    } else {
+                        Text("Finishing workout...")
+                            .font(.headline)
+                            .foregroundColor(.luxuryAccent)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .id("finishing-message")
+                        
+                        // Add progress indicator
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .luxuryAccent))
+                            .scaleEffect(1.5)
+                            .padding(.top, 10)
+                    }
                 }
-            }) {
-                Image(systemName: timerManager.isPaused ? "play.circle.fill" : "pause.circle.fill")
-                    .font(.system(size: 60))
-                    .foregroundColor(.luxuryAccent)
-                    .frame(width: 80, height: 80)
-                    .contentShape(Rectangle())
+                .padding()
+                .background(Color.luxuryCardBg.opacity(0.7))
+                .cornerRadius(15)
+                .id("transition-view")
+                .animation(.none)
+            } else {
+                // Pause/resume button
+                Button(action: {
+                    if timerManager.isPaused {
+                        timerManager.resumeWorkout()
+                    } else {
+                        timerManager.pauseWorkout()
+                    }
+                }) {
+                    Image(systemName: timerManager.isPaused ? "play.circle.fill" : "pause.circle.fill")
+                        .font(.system(size: 60))
+                        .foregroundColor(.luxuryAccent)
+                }
+                .padding()
+                .id("pause-button")
             }
-            .padding()
-            
-            // Exercise Video Display - updated to remove animations
-            ExerciseVideoView(exerciseName: tabataWorkout[timerManager.currentExerciseIndex].name)
-                .animation(nil) // Disable animation when changing exercises
         }
-        .animation(nil) // Disable overall container animation
+        .animation(.none) // Disable ALL animation at the container level
+    }
+}
+
+// Create a separate view for the completion overlay to avoid redraws
+struct CompletionOverlayView: View {
+    let nextExerciseName: String
+    let hasNextExercise: Bool
+    let onNext: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 15) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 60))
+                .foregroundColor(.luxuryAccent)
+            
+            Text("Exercise Complete!")
+                .font(.title3)
+                .foregroundColor(.luxuryText)
+            
+            if hasNextExercise {
+                Text("Next: \(nextExerciseName)")
+                    .font(.headline)
+                    .foregroundColor(.luxuryAccent)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .id("fixed-next-exercise")
+            }
+            
+            // Next exercise button
+            Button(action: onNext) {
+                Text("Next Exercise")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.luxuryAccent)
+                    .cornerRadius(10)
+            }
+        }
+        .padding()
+        .background(Color.luxuryCardBg.opacity(0.7))
+        .cornerRadius(15)
+        .id("completion-view") // Fixed ID
+        .animation(.none) // Disable ALL animations
     }
 }
 
@@ -1192,7 +1447,7 @@ struct ExerciseDetailsView: View {
                                 Text(level.rawValue).tag(level)
                             }
                         }
-                        .pickerStyle(SegmentedPickerStyle())
+                        .pickerStyle(.menu)
                         .padding(.vertical, 5)
                     }
                     
@@ -1604,7 +1859,7 @@ struct PersonalizationView: View {
                                     Text(genderOptions[index]).tag(index)
                                 }
                             }
-                            .pickerStyle(.segmented)
+                            .pickerStyle(.menu)
                             .padding(8)
                             .background(Color.luxuryCardBg)
                             .cornerRadius(8)
@@ -1627,7 +1882,7 @@ struct PersonalizationView: View {
                                     Text("lbs").tag(0)
                                     Text("kg").tag(1)
                                 }
-                                .pickerStyle(.segmented)
+                                .pickerStyle(.menu)
                                 .frame(width: 100)
                                 
                                 Spacer()
@@ -1683,7 +1938,7 @@ struct PersonalizationView: View {
                                                 Text("\(feet)").tag(feet)
                                             }
                                         }
-                                        .pickerStyle(.wheel)
+                                        .pickerStyle(.menu)
                                         .frame(height: 100)
                                         .clipped()
                                         .background(Color.luxuryCardBg)
@@ -1701,7 +1956,7 @@ struct PersonalizationView: View {
                                                 Text("\(inches)").tag(inches)
                                             }
                                         }
-                                        .pickerStyle(.wheel)
+                                        .pickerStyle(.menu)
                                         .frame(height: 100)
                                         .clipped()
                                         .background(Color.luxuryCardBg)
@@ -1727,7 +1982,7 @@ struct PersonalizationView: View {
                                 Text("Intermediate").tag(2)
                                 Text("Advanced").tag(3)
                             }
-                            .pickerStyle(.segmented)
+                            .pickerStyle(.menu)
                             .padding(8)
                             .background(Color.luxuryCardBg)
                             .cornerRadius(8)
@@ -1749,7 +2004,7 @@ struct PersonalizationView: View {
                                     Text(workoutTypes[index]).tag(index)
                                 }
                             }
-                            .pickerStyle(.segmented)
+                            .pickerStyle(.menu)
                             .padding(8)
                             .background(Color.luxuryCardBg)
                             .cornerRadius(8)
@@ -1950,7 +2205,7 @@ struct AddTargetView: View {
                             Text(period.rawValue).tag(period)
                         }
                     }
-                    .pickerStyle(SegmentedPickerStyle())
+                    .pickerStyle(.menu)
                     .padding(.horizontal)
                     
                     // Target type selection
@@ -1963,7 +2218,7 @@ struct AddTargetView: View {
                             Text(type.rawValue).tag(type)
                         }
                     }
-                    .pickerStyle(MenuPickerStyle())
+                    .pickerStyle(.menu)
                     .padding()
                     .background(Color.luxuryCardBg)
                     .cornerRadius(10)
@@ -2235,6 +2490,7 @@ struct WorkoutHistoryRow: View {
 struct WorkoutPreviewView: View {
     let tabataWorkout: [TabataExercise]
     let timerManager: WorkoutTimerManager
+    let totalDuration: Int
     
     var body: some View {
         VStack {
@@ -2243,6 +2499,19 @@ struct WorkoutPreviewView: View {
                 .font(.headline)
                 .foregroundColor(.luxuryText)
                 .padding(.top)
+            
+            // Add total workout time - use the provided duration value
+            Text("Total time: \(totalDuration) minutes")
+                .font(.subheadline)
+                .foregroundColor(.luxuryAccent)
+                .padding(.bottom, 10)
+            
+            // Show exercises per round calculation
+            let roundsPerExercise = max(1, (totalDuration * 60) / (tabataWorkout.count * 45))
+            Text("Each exercise: \(roundsPerExercise) rounds")
+                .font(.caption)
+                .foregroundColor(.luxuryText.opacity(0.8))
+                .padding(.bottom, 10)
             
             VStack(spacing: 12) {
                 ForEach(tabataWorkout) { exercise in
@@ -2275,7 +2544,7 @@ struct WorkoutPreviewView: View {
             
             // Start button
             Button(action: {
-                timerManager.startWorkout(with: tabataWorkout)
+                timerManager.startWorkout(with: tabataWorkout, totalDuration: totalDuration)
             }) {
                 Text("Start Workout")
                     .font(.headline)
@@ -2297,14 +2566,14 @@ struct PrimaryButtonStyle: ButtonStyle {
         configuration.label
             .font(.headline)
             .foregroundColor(.white)
-            .frame(height: 50) // Ensure minimum height
+            .frame(height: 50)
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 10)
                     .fill(Color.luxuryAccent)
                     .opacity(configuration.isPressed ? 0.8 : 1.0)
             )
-            .padding(.horizontal)
+            .shadow(color: Color.luxuryAccent.opacity(0.3), radius: 5, x: 0, y: 2)
     }
 }
 
@@ -2313,14 +2582,14 @@ struct SecondaryButtonStyle: ButtonStyle {
         configuration.label
             .font(.headline)
             .foregroundColor(.luxuryAccent)
-            .frame(height: 50) // Ensure minimum height
+            .frame(height: 50)
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(Color.luxuryAccent, lineWidth: 2)
                     .opacity(configuration.isPressed ? 0.8 : 1.0)
             )
-            .padding(.horizontal)
+            .shadow(color: Color.luxuryAccent.opacity(0.2), radius: 3, x: 0, y: 1)
     }
 }
 
